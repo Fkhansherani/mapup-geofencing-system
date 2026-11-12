@@ -1,0 +1,46 @@
+services:
+  # PostgreSQL with the PostGIS extension
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: geo
+      POSTGRES_PASSWORD: geo
+      POSTGRES_DB: geofence
+    ports:
+      - "5433:5432" # 5433 on your machine, so it does not clash with a local PostgreSQL
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U geo -d geofence"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Go API + WebSocket server
+  backend:
+    build: ./backend
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://geo:geo@db:5432/geofence?sslmode=disable
+      ALLOWED_ORIGINS: "*"
+      LOCATION_RATE_LIMIT_PER_MIN: "120"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # React app served by nginx
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # The browser calls the API directly, so this is the address as seen from your machine.
+        VITE_API_URL: http://localhost:8080
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
