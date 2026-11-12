@@ -1,3 +1,4 @@
+
 // Package api contains the HTTP handlers of the geofencing service.
 package api
 
@@ -16,8 +17,8 @@ import (
 
 // Options holds the settings that come from environment variables.
 type Options struct {
-	AllowedOrigins          string // "*" or a comma separated list of frontend URLs
-	LocationRateLimitPerMin int    // requests per minute per IP on POST /vehicles/location
+	AllowedOrigins          string
+	LocationRateLimitPerMin int
 }
 
 // Server holds everything the handlers need.
@@ -37,14 +38,13 @@ func NewServer(db *pgxpool.Pool, hub *ws.Hub, opts Options) *Server {
 	}
 }
 
-// querier is anything that can run queries: a connection pool or a transaction.
-// Helper functions accept this so they work inside and outside transactions.
+// querier is anything that can run queries.
 type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// Routes registers all endpoints. Go 1.22+ lets us write "METHOD /path" directly.
+// Routes registers all endpoints.
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
@@ -60,7 +60,6 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("POST /alerts/configure", s.configureAlert)
 	mux.HandleFunc("GET /alerts", s.listAlerts)
-	// Extra endpoints (not in the assessment list) so the UI can manage rules.
 	mux.HandleFunc("PATCH /alerts/{alert_id}", s.updateAlertStatus)
 	mux.HandleFunc("DELETE /alerts/{alert_id}", s.deleteAlert)
 
@@ -73,15 +72,21 @@ func (s *Server) Routes() http.Handler {
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, start, "database not reachable")
+		return
+	}
+
 	if err := s.db.Ping(r.Context()); err != nil {
 		writeError(w, http.StatusServiceUnavailable, start, "database not reachable")
 		return
 	}
+
 	writeJSON(w, http.StatusOK, start, map[string]any{"status": "ok"})
 }
 
-// logRequests prints one line per request. We do not wrap the ResponseWriter
-// here because that would break WebSocket upgrades.
+// logRequests prints one line per request.
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		begin := time.Now()
@@ -90,10 +95,11 @@ func logRequests(next http.Handler) http.Handler {
 	})
 }
 
-// cors lets the browser frontend (on another domain) call this API.
+// cors lets the browser frontend call this API.
 func (s *Server) cors(next http.Handler) http.Handler {
 	allowAll := strings.TrimSpace(s.opts.AllowedOrigins) == "*"
 	allowed := make(map[string]bool)
+
 	for _, origin := range strings.Split(s.opts.AllowedOrigins, ",") {
 		allowed[strings.TrimSpace(origin)] = true
 	}
@@ -107,14 +113,15 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Add("Vary", "Origin")
 		}
+
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
-		// Browsers send an OPTIONS "preflight" request before POST/PATCH/DELETE.
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+
 		next.ServeHTTP(w, r)
 	})
 }

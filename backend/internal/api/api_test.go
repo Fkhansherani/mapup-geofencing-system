@@ -153,3 +153,31 @@ func TestNewIDHasPrefix(t *testing.T) {
 		t.Error("two ids should not be equal")
 	}
 }
+
+// Test the health endpoint without requiring a database connection.
+
+func TestHealthEndpoint(t *testing.T) {
+	response := send(newTestServer(), "GET", "/health", "")
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (body: %s)", response.Code, response.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not valid JSON: %v", err)
+	}
+
+	if message, _ := body["error"].(string); message == "" {
+		t.Errorf("expected database error message, got %v", body)
+	}
+
+	timeNs, ok := body["time_ns"].(string)
+	if !ok {
+		t.Fatalf("time_ns should be a string, got %T", body["time_ns"])
+	}
+
+	if _, err := strconv.ParseInt(timeNs, 10, 64); err != nil {
+		t.Errorf("time_ns %q is not numeric", timeNs)
+	}
+}
